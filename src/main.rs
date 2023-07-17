@@ -11,6 +11,6 @@ use boxes::Boxes;
 
 
 fn main() {
-    let mut boxes = Boxes::new(800, 800);
+    let mut boxes = Boxes::new(800, 800, 1, 10);
     boxes.run();
 }

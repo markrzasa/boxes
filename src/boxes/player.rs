@@ -1,11 +1,9 @@
-use piston::{
-    Position,
-};
-use piston_window::{
-    Key
-};
+use piston::Position;
+use piston_window::Key;
 
 use crate::boxes::Boxes;
+
+use super::enemy::Enemy;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Direction {
@@ -16,21 +14,74 @@ pub enum Direction {
     Stopped,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlayerState {
+    Alive,
+    Dead
+}
+
 pub struct Player {
     cur_position: Position,
     prev_position: Position,
     cur_direction: Direction,
     prev_direction: Direction,
+    state: PlayerState,
+    height: i32,
+    width: i32,
 }
 
 impl Player {
-    pub fn new(x: i32, y: i32) -> Self {
+    pub fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
         Self {
-            cur_position: Position { x: x, y: y },
-            prev_position: Position { x: x, y: y },
+            cur_position: Position { x, y },
+            prev_position: Position { x, y },
             cur_direction: Direction::Stopped,
-            prev_direction: Direction::Stopped,            
+            prev_direction: Direction::Stopped,  
+            state: PlayerState::Alive,
+            height: height,
+            width: width,
         }
+    }
+
+    pub fn reset(&mut self, x: i32, y: i32) {
+        self.cur_position = Position { x, y };
+        self.prev_position = self.cur_position;
+        self.state = PlayerState::Alive;
+    }
+
+    pub fn dead(&mut self) {
+        self.state = PlayerState::Dead;
+    }
+
+    pub fn is_dead(&mut self) -> bool {
+        self.state == PlayerState::Dead
+    }
+
+    pub fn collided(&mut self, enemy: &Enemy) -> bool {
+        let e1 = enemy.get_position();
+        let e2 = Position{
+            x: e1.x + enemy.get_width(),
+            y: e1.y - enemy.get_height(),
+        };
+        let p1 = Position{
+            x: self.cur_position.x + (self.width / 4),
+            y: self.cur_position.y - (self.height / 4),
+        };
+        let p2 = Position{
+            x: (self.cur_position.x + self.width) - (self.width / 4),
+            y: (self.cur_position.y - self.height) + (self.height / 4),
+        };
+        if (p1.x >= e1.x && p1.x <= e2.x) || (p2.x >= e1.x && p2.x <= e2.x) {
+            if (p1.y <= e1.y && p1.y >= e2.y) || (p2.y <= e1.y && p2.y >= e2.y) {
+                println!("====================");
+                println!("player {} {} {} {}", p1.x, p1.y, p2.x, p2.y);
+                println!("enemy  {} {} {} {}", e1.x, e1.y, e2.x, e2.y);
+                println!("====================");
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn list_state(&self) {

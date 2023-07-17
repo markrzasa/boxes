@@ -15,6 +15,7 @@ pub enum EnemyState {
 }
 
 pub struct Enemy {
+    aggressive: bool,
     position: Position,
     height: i32,
     width: i32,
@@ -24,8 +25,9 @@ pub struct Enemy {
 }
 
 impl Enemy {
-    pub fn new(x: i32, y: i32, height: i32, width: i32) -> Self {
+    pub fn new(x: i32, y: i32, height: i32, width: i32, aggressive: bool) -> Self {
         Self {
+            aggressive: aggressive,
             position: Position {
                 x: x,
                 y: y,
@@ -38,8 +40,24 @@ impl Enemy {
         }
     }
 
+    pub fn is_aggressive(&self) -> bool {
+        self.aggressive
+    }
+
+    pub fn is_alive(&self) -> bool {
+        return self.state == EnemyState::Alive;
+    }
+
     pub fn get_position(&self) -> Position {
         self.position
+    }
+
+    pub fn get_height(&self) -> i32 {
+        self.height
+    }
+
+    pub fn get_width(&self) -> i32 {
+        self.width
     }
 
     pub fn dead(& mut self) {
@@ -80,19 +98,23 @@ impl Enemy {
 
     pub fn move_toward_player(& mut self, player: &Player, window_size: Size) {
         if self.update_move() {
-            let player_pos = player.get_cur_position();
+            let mut move_rate = 1;
+            if self.aggressive {
+                move_rate = 2;
+            }
+                let player_pos = player.get_cur_position();
             if self.position.x != player_pos.x {
                 if self.position.x < player_pos.x {
                     self.position.x = std::cmp::min(self.position.x + 1, window_size.width as i32 - self.width)
                 } else if self.position.x > player_pos.x {
-                    self.position.x = self.position.x - 1;
+                    self.position.x = self.position.x - move_rate;
                 }
             }
             if self.position.y != player_pos.y{
                 if self.position.y < player_pos.y {
                     self.position.y = std::cmp::min(self.position.y + 1, window_size.height as i32 - self.height);
                 } else if self.position.y > player_pos.y {
-                    self.position.y = self.position.y - 1;
+                    self.position.y = self.position.y - move_rate;
                 }
             }
         }

@@ -1,22 +1,20 @@
 mod enemy;
 mod player;
 
-use std::rc::Rc;
-use std::vec;
-
-use graphics::Transformed;
-use ::image::{ImageFormat};
-use opengl_graphics::{
-    OpenGL
+use std::{
+    cmp,
+    vec
 };
-use piston::{Position};
+use std::rc::Rc;
+
+use ::image::ImageFormat;
+use opengl_graphics::OpenGL;
+use piston::Position;
 use piston::input::*;
-use piston::window::{WindowSettings};
+use piston::window::WindowSettings;
 use piston_window::{
     clear,
     color,
-    text,
-    Glyphs,
     PistonWindow,
     Size,
     Texture,
@@ -30,7 +28,7 @@ use enemy::{
     Enemy,
     EnemyState
 };
-use player::{Player};
+use player::Player;
 
 use self::player::Direction;
 
@@ -43,7 +41,7 @@ const WARN_LINE_LEN: f64 = MAX_LINE_LEN * 0.75;
 enum GameState {
     Playing,
     LevelComplete,
-    NextLevel
+    PlayerDied,
 }
 
 pub struct Line {
@@ -113,11 +111,13 @@ pub struct Boxes {
     lines: Vec<Line>,
     player: Player,
     enemies: Vec<Enemy>,
+    cur_enemies: i32,
+    max_enemies: i32,
     state: GameState
 }
 
 impl Boxes {
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, start_enemies: i32, max_enemies: i32) -> Self {
         Self {
             window_size: Size::from([width, height]),
             lines: vec![
@@ -126,11 +126,15 @@ impl Boxes {
                     from: Position { x: START_X, y: START_Y },
                 }
             ],
-            enemies: vec![
-                Enemy::new(100, height as i32 - SPRITE_WIDTH, SPRITE_WIDTH, SPRITE_WIDTH),
-                Enemy::new(300, height as i32 - SPRITE_WIDTH, SPRITE_WIDTH, SPRITE_WIDTH)
-            ],
-            player: Player::new(START_X, START_Y),
+            cur_enemies: start_enemies,
+            max_enemies: max_enemies,
+            enemies: (0..start_enemies).map(|i| Enemy::new(
+                100 + ((SPRITE_WIDTH * i) + 5),
+                height as i32 - SPRITE_WIDTH,
+                SPRITE_WIDTH, SPRITE_WIDTH,
+                i % 2 == 0
+            )).collect::<Vec<_>>(),
+            player: Player::new(START_X, START_Y, SPRITE_WIDTH, SPRITE_WIDTH),
             state: GameState::Playing
         }
     }
@@ -151,7 +155,21 @@ impl Boxes {
         println!("====================");
     }
 
-    fn update(&mut self) {
+    fn update_player(&mut self) {
+        let mut player_pos = self.player.get_cur_position();
+        let margin = SPRITE_WIDTH / 4;
+        player_pos.x = player_pos.x + margin;
+        player_pos.y = player_pos.y - margin;
+        for e in self.enemies.iter().filter(|e| e.is_alive()) {
+            if self.player.collided(e) {
+                self.player.dead();
+            }
+        }
+
+        if self.player.is_dead() {
+            return
+        }
+
         if self.player.is_moving() {
             if let Some(l) = self.lines.last_mut() {
                 if l.len() > MAX_LINE_LEN {
@@ -168,19 +186,21 @@ impl Boxes {
                 }
             }
         }
+    }
 
+    fn update_enemies(&mut self) {
         if self.lines.len() >= 4 {
             if let Some(last_line) = self.lines.last() {
                 if let Some(first_line) = self.lines.first() {
                     if last_line.intersects(first_line) {
                         let x_coords = vec!(
-                            first_line.from.x,
+                                first_line.from.x,
                             first_line.to.x,
                             last_line.from.x,
                             last_line.to.x
                         );
                         let y_coords = vec!(
-                            first_line.from.y,
+                                first_line.from.y,
                             first_line.to.y,
                             last_line.from.y,
                             last_line.to.y
@@ -189,7 +209,7 @@ impl Boxes {
                             if let Some(start_y) = y_coords.iter().min() {
                                 if let Some(end_x) = x_coords.iter().max() {
                                     if let Some(end_y) = y_coords.iter().max() {
-                                        for e in self.enemies.iter_mut() {
+                                        for e in self.enemies.iter_mut().filter(|e| e.is_alive()) {
                                             let e_pos = e.get_position();
                                             if (*start_x <= e_pos.x) && (e_pos.x <= *end_x) && (*start_y <= e_pos.y) && (e_pos.y <= *end_y) {
                                                 e.dead();
@@ -204,22 +224,48 @@ impl Boxes {
                 }
             }
         }
+    }
 
-        if self.lines.len() > 4 {
-            self.lines.remove(0);
-        }
-
-        let mut range = rand::thread_rng();
-        let attack = Uniform::from(0..3);
+    fn move_enemies(&mut self) {
         for e in self.enemies.iter_mut() {
+            if e.is_aggressive() {
+                e.move_toward_player(&self.player, self.window_size);
+                continue;
+            }
+            let mut range = rand::thread_rng();
+            let attack = Uniform::from(0..3);
             match attack.sample(&mut range) {
                 0 => {e.move_away_from_player(&self.player, self.window_size)},
                 1 => {},
                 _ => {e.move_toward_player(&self.player, self.window_size)},
             }
         }
+    }
+
+    fn update(&mut self) {
+        self.update_player();
+
+        self.update_enemies();
+
+        if self.lines.len() > 4 {
+            self.lines.remove(0);
+        }
+
+        self.move_enemies();
 
         self.list_state();
+    }
+
+    pub fn reset_screen(&mut self) {
+        self.enemies = (0..self.cur_enemies).map(|i| Enemy::new(
+            100 + ((SPRITE_WIDTH * i) + 5),
+            self.window_size.height as i32 - SPRITE_WIDTH,
+            SPRITE_WIDTH,
+            SPRITE_WIDTH,
+            i % 2 == 0
+        )).collect::<Vec<_>>();
+        self.player.reset(START_X, START_Y);
+        self.clear_lines();
     }
 
     pub fn run(&mut self) {
@@ -237,12 +283,6 @@ impl Boxes {
             encoder: window.factory.create_command_buffer().into()
         };
     
-        let mut glyphs = Glyphs::from_bytes(
-            include_bytes!("../fonts/PressStart2PRegular.ttf"),
-            window.create_texture_context(),
-            TextureSettings::new(),
-        ).unwrap();
-
         let image_buffer = match ::image::load_from_memory_with_format(include_bytes!("../images/hero.png"), ImageFormat::Png) {
             Ok(img) => img,
             Err(_) => panic!("failed to load hero sprite"),
@@ -271,18 +311,15 @@ impl Boxes {
         while let Some(e) = window.next() {
             match self.state {
                 GameState::LevelComplete => {
-                    window.draw_2d(&e, |c, g, _| {
-                        clear(color::BLACK, g);
-                        text::Text::new_color(color::YELLOW, 14).draw(
-                            "Level Complete!",
-                            & mut glyphs,
-                            &c.draw_state,
-                            c.transform.trans(50.0, 50.0),
-                            g
-                        ).unwrap();
-                    });
+                    self.cur_enemies = cmp::min(self.cur_enemies + 1, self.max_enemies);
+                    self.reset_screen();
+                    self.state = GameState::Playing;
+                    enemy_sprites = self.enemies.iter().map(|_| Sprite::from_texture(enemy_texture.to_owned())).collect::<Vec<_>>();
                 },
-                GameState::NextLevel => {},
+                GameState::PlayerDied => {
+                    self.reset_screen();
+                    self.state = GameState::Playing;
+                },
                 GameState::Playing => {
                     self.player = self.player.update(self);
                     if let Some(Button::Keyboard(key)) = e.press_args() {
@@ -293,69 +330,73 @@ impl Boxes {
                     };
                     self.update();
         
-                    window.draw_2d(&e, |c, g, _| {
-                        clear(color::GRAY, g);
-                        for (i, l) in self.lines.iter().enumerate() {
-                            let mut color = color::RED;
-                            if (i == (self.lines.len() - 1)) && (l.len() >= WARN_LINE_LEN) {
-                                color = color::YELLOW;
-                            }
-                            piston_window::line_from_to(
-                                color,
-                                3.0,
-                                [l.from.x as f64, l.from.y as f64],
-                                [l.to.x as f64, l.to.y as f64],
-                                c.transform,
-                                g
-                            );
-                        }
-        
-                        let mut enemies_to_remove: Vec<usize> = vec![];
-                        for (i, e) in enemy_sprites.iter_mut().enumerate() {
-                            if let Some(enemy) = self.enemies.get_mut(i) {
-                                e.set_position(enemy.get_position().x as f64, enemy.get_position().y as f64);
-                                match enemy.get_state() {
-                                    EnemyState::Alive => {e.set_src_rect([0.0, 0.0, SPRITE_WIDTH as f64, SPRITE_WIDTH as f64])},
-                                    EnemyState::Dead => {
-                                        let (state, ai) = enemy.update_dead_animation();
-                                        match state {
-                                            EnemyState::Dead => {
-                                                e.set_src_rect([SPRITE_WIDTH as f64 * (ai as f64 + 1.0), 0.0, SPRITE_WIDTH as f64, SPRITE_WIDTH as f64]);
-                                            },
-                                            _ => {enemies_to_remove.push(i);}
-                                        }
-                                    },
-                                    EnemyState::Done => {enemies_to_remove.push(i)},
+                    if self.player.is_dead() {
+                        self.state = GameState::PlayerDied;
+                    } else {
+                        window.draw_2d(&e, |c, g, _| {
+                            clear(color::GRAY, g);
+                            for (i, l) in self.lines.iter().enumerate() {
+                                let mut color = color::RED;
+                                if (i == (self.lines.len() - 1)) && (l.len() >= WARN_LINE_LEN) {
+                                    color = color::YELLOW;
                                 }
-                                if enemy.get_state() != EnemyState::Done {
-                                    e.draw(c.transform, g);
+                                piston_window::line_from_to(
+                                    color,
+                                    3.0,
+                                    [l.from.x as f64, l.from.y as f64],
+                                    [l.to.x as f64, l.to.y as f64],
+                                    c.transform,
+                                    g
+                                );
+                            }
+            
+                            let mut enemies_to_remove: Vec<usize> = vec![];
+                            for (i, e) in enemy_sprites.iter_mut().enumerate() {
+                                if let Some(enemy) = self.enemies.get_mut(i) {
+                                    e.set_position(enemy.get_position().x as f64, enemy.get_position().y as f64);
+                                    match enemy.get_state() {
+                                        EnemyState::Alive => {e.set_src_rect([0.0, 0.0, SPRITE_WIDTH as f64, SPRITE_WIDTH as f64])},
+                                        EnemyState::Dead => {
+                                            let (state, ai) = enemy.update_dead_animation();
+                                            match state {
+                                                EnemyState::Dead => {
+                                                    e.set_src_rect([SPRITE_WIDTH as f64 * (ai as f64 + 1.0), 0.0, SPRITE_WIDTH as f64, SPRITE_WIDTH as f64]);
+                                                },
+                                                _ => {enemies_to_remove.push(i);}
+                                            }
+                                        },
+                                        EnemyState::Done => {enemies_to_remove.push(i)},
+                                    }
+                                    if enemy.get_state() != EnemyState::Done {
+                                        e.draw(c.transform, g);
+                                    }
                                 }
                             }
-                        }
-        
-                        if enemies_to_remove.len() > 0 {
-                            for i in enemies_to_remove.iter().rev() {
-                                enemy_sprites.remove(*i);
+            
+                            if enemies_to_remove.len() > 0 {
+                                for i in enemies_to_remove.iter().rev() {
+                                    enemy_sprites.remove(*i);
+                                    self.enemies.remove(*i);
+                                }
                             }
-                        }
-        
-                        player_sprite.set_position(self.player.get_cur_position().x as f64, self.player.get_cur_position().y as f64);
-                        match self.player.get_cur_direction() {
-                            Direction::Down => {player_sprite.set_rotation(90.0)},
-                            Direction::Left => {player_sprite.set_rotation(180.0)},
-                            Direction::Right => {player_sprite.set_rotation(0.0)},
-                            Direction::Up => {player_sprite.set_rotation(270.0)},
-                            _ => {}
-                        }
-                        player_sprite.draw(c.transform, g);
-                    });
-
-                    if enemy_sprites.len() <= 0 {
-                        self.enemies.clear();
-                        self.state = GameState::LevelComplete;
+            
+                            player_sprite.set_position(self.player.get_cur_position().x as f64, self.player.get_cur_position().y as f64);
+                            match self.player.get_cur_direction() {
+                                Direction::Down => {player_sprite.set_rotation(90.0)},
+                                Direction::Left => {player_sprite.set_rotation(180.0)},
+                                Direction::Right => {player_sprite.set_rotation(0.0)},
+                                Direction::Up => {player_sprite.set_rotation(270.0)},
+                                _ => {}
+                            }
+                            player_sprite.draw(c.transform, g);
+                        });
+    
+                        if enemy_sprites.len() <= 0 {
+                            self.enemies.clear();
+                            self.state = GameState::LevelComplete;
+                        }    
                     }
                 },
-                _ => {},
             }
         }
     }
